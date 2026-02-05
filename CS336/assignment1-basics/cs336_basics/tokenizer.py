@@ -157,7 +157,7 @@ def run_bpe(
         if not stats:
             break
         # get best_pair: heigher freq / smaller id
-        best_pair = max(stats, key=lambda k: (stats[k], -k[0], -k[1]))
+        best_pair = max(stats, key=lambda k: (stats[k], k))
         merge_rules.append((vocab[best_pair[0]], vocab[best_pair[1]]))
         # update
         vocab[current_id] = vocab[best_pair[0]] + vocab[best_pair[1]]
