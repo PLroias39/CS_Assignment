@@ -1,10 +1,12 @@
 # tokenizer.py
+# task_01
 # include run_bpe and Tokenizer-Class
-#
 
 import os
 import regex
 import collections
+import json
+from typing import Iterable, Iterator
 
 # Initialize Vocabulary
 def init_vocab_v1_base(special_tokens: list[str]) -> tuple[dict[int: bytes], int]:
@@ -172,9 +174,66 @@ def _test_main_loop(init_fn):
     if os.path.exists(test_file):
         os.remove(test_file)
 
+
+class Tokenizer:
+    def __init__(
+        self, 
+        vocab: dict[int, bytes], 
+        merges: list[tuple[bytes, bytes]], 
+        special_tokens: list[str] | None = None,  
+    ):
+        self.vocab = vocab
+        self.merges = merges
+        self.special_tokens = special_tokens
+        self.re_vocab = {v: k for k, v in vocab.items()}
+
+    @classmethod
+    def from_files(
+        cls, 
+        vocab_filepath: str, 
+        merges_filepath: str, 
+        special_tokens: list[str] | None = None
+    ):
+        """
+        import from files 
+        data/Tinystory_vocab.json: {"id": "token_str", ...}
+        data/Tinystory_merges.txt: token1 token2\n
+        """
+        # get vocab
+        with open(vocab_filepath, "r", encoding='utf-8') as f:
+            raw_vocab = json.load(f)
+        vocab = {
+            int(idx): token_str.encode('latin-1')
+            for idx, token_str in raw_vocab.items()
+        }
+        
+        # get merges
+        merges = []
+        with open(merges_filepath, "r", encoding='utf-8')as f:
+            lines = f.readlines()
+            start_idx = 0
+            if lines and lines[0].startswith("#"):
+                start_idx = 1
+            for line in lines[start_idx]:
+                line = line.strip()
+                if not line: continue
+                parts = line.split(' ')
+                if len(parts) == 2:
+                    p1 = parts[0].encode('latin-1')
+                    p2 = parts[1].encode('latin-1')
+                    merges.append((p1, p2))
+        
+        return cls(vocab=vocab, merges=merges, special_tokens=special_tokens)
+    
+    def encode(self, text: str) -> list[int]:
+        pass
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+        pass
+    def decode(self, ids: list[int]) -> str:
+        pass
 if __name__ == "__main__":
     pass
     # _test_init_vocab(init_vocab_v1_base)
     # _test_pre_tokenization(pre_tokenization_v1_base)
     #  _test_get_stats(get_stats_v1_base)
-    _test_main_loop(run_train_bpe_v1)
+    # _test_main_loop(run_train_bpe_v1)
