@@ -38,10 +38,12 @@ def pre_tokenization_v1_base(input_path: str | os.PathLike, special_tokens: list
     
     pre_tokens_cnt = collections.defaultdict(int)
     # 1. read path
+    # content: "Hello, felys.<|endoftext|>For test."
     with open(input_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    # 2. Split by special_tokens: doc -> sample + <special_tokens> + sample
+    # 2. Split by special_tokens: doc -> samples
+    # chunks: ["Hello, felys", "For test."]
     if special_tokens:
         special_PAT = "|".join(map(regex.escape, special_tokens))
         chunks = regex.split(special_PAT, content)
@@ -49,6 +51,7 @@ def pre_tokenization_v1_base(input_path: str | os.PathLike, special_tokens: list
         chunks = [content]
 
     # 3. Split by regex: sample -> strings
+    # words:["It", " 's", "felys", "."]
     # 可放到函数外进行预编译
     PAT =regex.compile( r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
     for chunk in chunks:
@@ -57,8 +60,8 @@ def pre_tokenization_v1_base(input_path: str | os.PathLike, special_tokens: list
         words = PAT.findall(chunk)
         for word in words:
             # "Hug" -> (b'H', b'u', b'g')
-            byte_tuple = tuple(bytes([b]) for b in word.encode('utf-8'))
-            pre_tokens_cnt[byte_tuple] += 1
+            word_byte_tuple = tuple(bytes([b]) for b in word.encode('utf-8'))
+            pre_tokens_cnt[word_byte_tuple] += 1
             
     return pre_tokens_cnt
 
@@ -76,8 +79,8 @@ def _test_pre_tokenization(init_fn):
         f.write(test_content)
 
     pre_tokens_cnt = init_fn(test_file, special_tokens)
-    for byte_tuple, cnt in pre_tokens_cnt.items():
-        print(f"{byte_tuple}:{cnt}")
+    for word_byte_tuple, cnt in pre_tokens_cnt.items():
+        print(f"{word_byte_tuple}:{cnt}")
 
     if os.path.exists(test_file):
         os.remove(test_file)
@@ -185,7 +188,8 @@ class Tokenizer:
         self.vocab = vocab
         self.merges = merges
         self.special_tokens = special_tokens
-        self.re_vocab = {v: k for k, v in vocab.items()}
+        # reverse vocab
+        self.byte_to_int = {v: k for k, v in vocab.items()}
 
     @classmethod
     def from_files(
@@ -224,11 +228,96 @@ class Tokenizer:
                     merges.append((p1, p2))
         
         return cls(vocab=vocab, merges=merges, special_tokens=special_tokens)
-    
+   
+    def _merge_word(self, word_byte_tuple: tuple[bytes, ...]) -> tuple[bytes, ...]:
+        """(b"T", b"e", b"s", b"t") -> (b"Tes", b"t")"""
+        if len(word_byte_tuple) < 2:
+            return word_byte_tuple
+        
+        current_list = list(word_byte_tuple)
+        while True:
+            best_pair = None
+            min_rank = float('inf')
+            
+            # create pair and rank
+            for i in range(len(current_list)-1):
+                pair = (current_list[i], current_list[i+1])
+                rank = self.merge_rules.get(pair, float('inf'))
+                # check if the rank is lower
+                if rank < min_rank:
+                    min_rank = rank
+                    best_pair = pair
+            if best_pair is None:
+                break
+            
+            # apply change, and add to new_list
+            new_list = []
+            i = 0
+            while i < len(current_list):
+                if i < len(current_list)-1 and (current_list[i], current_list[i+1]) == best_pair
+                    new_list.append(current_list[i] + current_list[i+1])
+                    i += 2
+                else:
+                    new_list.append(current_list[i])
+                    i += 1
+            current_list = new_list
+            
+            # check if only one word
+            if len(current_list) == 1:
+                break
+
+        return tuple(current_list)
     def encode(self, text: str) -> list[int]:
-        pass
+        words_to_ids = []
+        # 1.split by special_tokens, 
+        # but keep them.(use regex's parentheses)
+        # chunks: ["Hello, felys!", "<|endoftext|>", "For test."]
+        if special_tokens:
+            special_PAT = f"({'|'.join(map(regex.escape, self.special_tokens))})"
+            chunks = regex.split(special_PAT, text)
+        else:
+            chunks = [text]
+
+        # 2.deal with general text:
+        # 2.1 split by regex, 
+        # 2.2 split to basic bytes, 
+        # 2.3 apply merges, 
+        # 2.4 transfer to ids
+        # but jump special_tokens
+        # words:["It", " 's", "felys", "."]
+        PAT =regex.compile( r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
+        for chunk in chunks:
+            if not chunk:
+                continue
+            # jump special_tokens
+            if chunk in self.special_tokens:
+                special_bytes = chunk.encode('utf-8')
+                words_to_ids.append(self.byte_to_int[special_bytes])
+                continue
+            # 2.1 split by regex
+            words = PAT.findall(chunk)
+            for word in words:
+                # 2.2 split to basic bytes
+                # "Hug" -> (b"H", b"u", b"g")
+                word_byte_tuple = tuple(bytes([b]) for b in word.encode('utf-8'))
+                # 2.3 apply merges
+                # (b"T", b"e", b"s", b"t") -> (b"Tes", b"t")
+                merged_byte_tuple = self._merge_word(word_byte_tuple)
+                # 2.4 transfer to ids
+                for b in merged_byte_tuple:
+                    words_to_ids.append(self.byte_to_int[b])
+        return words_to_ids
+            
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
-        pass
+        """ 
+        make sure process (one part) of (iterable) a time 
+        such as (a yield) of (string fd)
+        memory-efficient for large files
+        """
+        for text_line in iterable:
+            line_ids = self.encode(text_line)
+            for token_id in line_ids:
+                yield token_id
     def decode(self, ids: list[int]) -> str:
         pass
 if __name__ == "__main__":
