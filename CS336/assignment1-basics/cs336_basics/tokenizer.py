@@ -179,29 +179,24 @@ def _test_main_loop(init_fn):
 
 
 class Tokenizer:
-    def __init__(
-        self, 
+    def __init__(self, 
         vocab: dict[int, bytes], 
         merges: list[tuple[bytes, bytes]], 
         special_tokens: list[str] | None = None,  
     ):
         self.vocab = vocab
         self.merges = merges
-        self.special_tokens = special_tokens
+        self.special_tokens = special_tokens if special_tokens is not None else []
         # reverse vocab
         self.byte_to_int = {v: k for k, v in vocab.items()}
-
+        self.merges_rank = {pair: i for i, pair in enumerate(merges)}
+    # use @classmethod, only need to transport filepath, instead parse outside
     @classmethod
-    def from_files(
-        cls, 
-        vocab_filepath: str, 
-        merges_filepath: str, 
-        special_tokens: list[str] | None = None
-    ):
+    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
         """
         import from files 
-        data/Tinystory_vocab.json: {"id": "token_str", ...}
-        data/Tinystory_merges.txt: token1 token2\n
+        json:{"id": "token_str", ...} 
+        txt: token1 token2\n
         """
         # get vocab
         with open(vocab_filepath, "r", encoding='utf-8') as f:
@@ -214,11 +209,7 @@ class Tokenizer:
         # get merges
         merges = []
         with open(merges_filepath, "r", encoding='utf-8')as f:
-            lines = f.readlines()
-            start_idx = 0
-            if lines and lines[0].startswith("#"):
-                start_idx = 1
-            for line in lines[start_idx]:
+            for line in f:
                 line = line.strip()
                 if not line: continue
                 parts = line.split(' ')
@@ -242,7 +233,7 @@ class Tokenizer:
             # create pair and rank
             for i in range(len(current_list)-1):
                 pair = (current_list[i], current_list[i+1])
-                rank = self.merge_rules.get(pair, float('inf'))
+                rank = self.merges_rank.get(pair, float('inf'))
                 # check if the rank is lower
                 if rank < min_rank:
                     min_rank = rank
@@ -254,7 +245,7 @@ class Tokenizer:
             new_list = []
             i = 0
             while i < len(current_list):
-                if i < len(current_list)-1 and (current_list[i], current_list[i+1]) == best_pair
+                if i < len(current_list)-1 and (current_list[i], current_list[i+1]) == best_pair:
                     new_list.append(current_list[i] + current_list[i+1])
                     i += 2
                 else:
@@ -267,13 +258,20 @@ class Tokenizer:
                 break
 
         return tuple(current_list)
+    
     def encode(self, text: str) -> list[int]:
         words_to_ids = []
         # 1.split by special_tokens, 
         # but keep them.(use regex's parentheses)
         # chunks: ["Hello, felys!", "<|endoftext|>", "For test."]
-        if special_tokens:
-            special_PAT = f"({'|'.join(map(regex.escape, self.special_tokens))})"
+        if self.special_tokens:
+            # fixerror: prior to long special_tokens
+            sorted_special_tokens = sorted(
+                self.special_tokens,
+                key = lambda x: len(x),
+                reverse = True
+            )
+            special_PAT = f"({'|'.join(map(regex.escape, sorted_special_tokens))})"
             chunks = regex.split(special_PAT, text)
         else:
             chunks = [text]
@@ -290,7 +288,7 @@ class Tokenizer:
             if not chunk:
                 continue
             # jump special_tokens
-            if chunk in self.special_tokens:
+            if self.special_tokens and chunk in self.special_tokens:
                 special_bytes = chunk.encode('utf-8')
                 words_to_ids.append(self.byte_to_int[special_bytes])
                 continue
@@ -318,11 +316,108 @@ class Tokenizer:
             line_ids = self.encode(text_line)
             for token_id in line_ids:
                 yield token_id
+    # id -> bytes -> string
     def decode(self, ids: list[int]) -> str:
-        pass
+        if not ids:
+            return ""
+        byte_segments = [self.vocab[i] for i in ids]
+        byte_all = b"".join(byte_segments)
+        return byte_all.decode('utf-8', errors='replace')
+
+import pathlib
+import numpy as np
+
+current_file_path = pathlib.Path(__file__).resolve()
+root_file_path = current_file_path.parent.parent
+vocab_filepath = root_file_path / "data" / "Tinystory_vocab.json"
+merges_filepath = root_file_path / "data" / "Tinystory_merges.txt"
+
+tokenizer_text_path = root_file_path / "data" / "tokenizer_text_path.txt"
+tokenizer_encode_path = root_file_path / "data" / "tokenizer_encode_tempfile.txt"
+tokenizer_decode_path = root_file_path / "data" / "tokenizer_decode_tempfile.txt"
+
+def _test_tokenizer_encode(batch_size=512):
+    tokenizer = Tokenizer.from_files(
+        vocab_filepath = vocab_filepath,
+        merges_filepath = merges_filepath,
+        special_tokens = ["<|endoftext|>"]
+    )
+    # deal with iterable object
+    # save as binary file with batch writing
+    with open(tokenizer_text_path, "r", encoding='utf-8') as input_f, \
+        open(tokenizer_encode_path, "wb") as output_f:
+        
+        batch = []
+        total_tokens = 0
+        token_generator = tokenizer.encode_iterable(input_f)
+
+        for token_id in token_generator:
+            batch.append(token_id)
+            if len(batch) >= batch_size:
+                binary_data = np.array(batch, dtype=np.uint32).tobytes()
+                output_f.write(binary_data)
+                total_tokens += len(batch)
+                batch = []
+        if batch:
+            binary_data = np.array(batch, dtype=np.uint32).tobytes()
+            output_f.write(binary_data)
+            total_tokens += len(batch)
+    print(f"[DONE] total_tokens: {total_tokens}")
+    
+    # peek binary_data, peek 10 tokens
+    num_tokens = 10
+    bytes_to_read = num_tokens * 4
+    try:
+        # use f.write function to check
+        with open(tokenizer_encode_path, "rb")as f:
+            raw_data = f.read(bytes_to_read)
+        token_ids = np.frombuffer(raw_data, dtype=np.uint32)
+        print(f"{len(token_ids)}/{num_tokens} beginning token_id are: ")
+        print(token_ids.tolist())
+    
+    except Exception as e:
+        print(f"[ERROR]: {e}")
+
+def _test_tokenizer_decode():
+    print("\n--- Start Decoding Test ---\n")
+    tokenizer = Tokenizer.from_files(
+        vocab_filepath = vocab_filepath,
+        merges_filepath = merges_filepath,
+        special_tokens = ["<|endoftext|>"]
+    )
+    # read token_ids
+    try:
+        token_ids = np.fromfile(tokenizer_encode_path, dtype=np.uint32).tolist()
+    except Exception as e:
+        print(f"[ERROR] Failed to read binary_data")
+    # decode text
+    decoded_text = tokenizer.decode(token_ids)
+    # save file
+    with open(tokenizer_decode_path, "w", encoding='utf-8') as f:
+        f.write(decoded_text)
+    # conpare
+    with open(tokenizer_text_path, "r", encoding='utf-8') as f:
+        original_text = f.read()
+    print(f"[CHECK] original_text:{len(original_text)}")
+    print(f"[CHECK] decoded_text: {len(decoded_text)}\n")
+    if original_text == decoded_text:
+        print(f"[SUCCESS] pass test")
+    else:
+        print(f"[FAILURE] unpass test")
+        min_len = min(len(original_text), len(decoded_text))
+        for i in range(min_len):
+            if original_text[i] != decoded_text[i]:
+                print(f"First mismatch at {i}: ")
+                print(f"original_text: {repr(original_text[i-5:i+15])}")
+                print(f"decoded_text: {repr(decoded_text[i-5:i+15])}")
+            
+
+
 if __name__ == "__main__":
     pass
     # _test_init_vocab(init_vocab_v1_base)
     # _test_pre_tokenization(pre_tokenization_v1_base)
     #  _test_get_stats(get_stats_v1_base)
     # _test_main_loop(run_train_bpe_v1)
+    # _test_tokenizer_encode()
+    # _test_tokenizer_decode()
