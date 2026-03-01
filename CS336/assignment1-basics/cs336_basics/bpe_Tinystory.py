@@ -5,7 +5,7 @@
 import time
 import json
 import pathlib
-from cs336_basics.tokenizer import run_train_bpe_v1
+from cs336_basics.tokenization import run_train_bpe_v1
 
 current_file_path = pathlib.Path(__file__).resolve()
 root_project_path = current_file_path.parent.parent

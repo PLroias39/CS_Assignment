@@ -134,6 +134,9 @@ class RMSNorm(nn.Module):
         
         return output.to(input_dtype)
 
+def silu(x: torch.Tensor):
+    return x * torch.sigmoid(x)
+
 class SwiGLU(nn.Module):
     """
     input: (batch_size, max_seq_len, d_model=512)
@@ -177,7 +180,7 @@ class SwiGLU(nn.Module):
     def forward(self, x) -> torch.Tensor:
         # compute SiLU
         gate = einsum(self.w_gate, x, 'd_ff d_model, ... d_model -> ... d_ff')
-        gate_activated = gate * torch.sigmoid(gate)
+        gate_activated = silu(gate)
         # up cast
         up_proj = einsum(self.w_up, x, 'd_ff d_model, ... d_model -> ... d_ff')
         # position-wise multiply
