@@ -7,6 +7,7 @@ import regex
 import collections
 import json
 from typing import Iterable, Iterator
+from tqdm import tqdm
 
 # Initialize Vocabulary
 def init_vocab_v1_base(special_tokens: list[str]) -> tuple[dict[int: bytes], int]:
@@ -136,23 +137,38 @@ def run_train_bpe_v1(
     pre_tokens_cnt = pre_tokenization_v1_base(input_path, special_tokens)
  
     merge_rules = []
-    while len(vocab) < vocab_size:
-        # 3. Get frequency
-        pair_counts = get_stats_v1_base(pre_tokens_cnt)
-        if not pair_counts:
-            break
+    num_merges = vocab_size - len(vocab)
 
-        # get best_pair
-        max_count = max(pair_counts.values())
-        candidates = [k for k, v in pair_counts.items() if v == max_count]
-        best_pair = max(candidates)
+    with tqdm(total=num_merges, desc="BPE Training", unit="merge")as pbar:
+        while len(vocab) < vocab_size:
+            # 3. Get frequency
+            pair_counts = get_stats_v1_base(pre_tokens_cnt)
+            if not pair_counts:
+                break
 
-        # update
-        vocab[next_id] = best_pair[0] + best_pair[1]
-        next_id += 1
-        merge_rules.append(best_pair)
-        # 4. Merge Vocab
-        pre_tokens_cnt = merge_tokens_v1_base(pre_tokens_cnt, best_pair, best_pair[0] + best_pair[1])
+            # get best_pair
+            max_count = max(pair_counts.values())
+            candidates = [k for k, v in pair_counts.items() if v == max_count]
+            best_pair = max(candidates)
+
+            # update
+            vocab[next_id] = best_pair[0] + best_pair[1]
+            next_id += 1
+            merge_rules.append(best_pair)
+
+            # 4. Merge Vocab
+            pre_tokens_cnt = merge_tokens_v1_base(pre_tokens_cnt, best_pair, best_pair[0] + best_pair[1])
+            # update tqdm
+            pbar.update(1)
+            try:
+                display_pair = (best_pair[0].decode('latin-1'), best_pair[1].decode('latin-1'))
+            except:
+                display_pair = str(best_pair)
+            # set debugging info 
+            pbar.set_postfix({
+                "freq": max_count, 
+                "last_merge": f"{display_pair}"
+            })
 
     return vocab, merge_rules
 
@@ -210,7 +226,7 @@ class Tokenizer:
         merges = []
         with open(merges_filepath, "r", encoding='utf-8')as f:
             for line in f:
-                line = line.strip()
+                # line = line.strip()
                 if not line: continue
                 parts = line.split(' ')
                 if len(parts) == 2:
