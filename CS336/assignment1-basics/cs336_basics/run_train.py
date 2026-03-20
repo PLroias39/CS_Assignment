@@ -203,10 +203,11 @@ def main():
             device=device
         )
         # Feedward & Backward boardcast
+        optimizer.zero_grad()
         logits = model(X)
         loss = cross_entropy_loss(logits.view(-1, logits.size(-1)), Y.view(-1))
         loss.backward()
-        optimizer.zero_grad()
+
         # Gradient clip 
         if args.clip_grad_norm > 0:
             gradient_clipping(model.parameters(), args.clip_grad_norm)
@@ -220,7 +221,7 @@ def main():
                 "train/step": it 
             }
             if args.wandb_log:
-                wandb_log(train_metrics)
+                wandb.log(train_metrics)
             pbar.set_postfix({
                 "loss": f"{loss.item():.4f}", 
                 "lr": f"{lr:.2e}"
