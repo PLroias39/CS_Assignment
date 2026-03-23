@@ -9,6 +9,63 @@ import json
 from typing import Iterable, Iterator
 from tqdm import tqdm
 
+
+def _test_init_vocab(init_fn):
+    special_tokens = ["<|endoftext|>", "a"]
+    vocab, next_id = init_fn(special_tokens)
+    for id, token in vocab.items():
+        print(f"{id}:{repr(token)}", end="\t")
+        if (id + 1) % 5 == 0:
+            print()
+        if id == len(vocab):
+            print()
+
+def _test_pre_tokenization(init_fn):
+    test_file = "test-data.txt"
+    special_tokens = ["<|endoftext|>", ]
+    test_content = """
+    HI, this is the test example in BPE training code.<|endoftext|>
+    I just wanna testing my code weither success to work<|endoftext|>
+    Happy for 2026CS336.<|endoftext|>
+    written in 2026-2-4-12:21
+    """
+
+    with open(test_file, 'w', encoding='utf-8') as f:
+        f.write(test_content)
+
+    pre_tokens_cnt = init_fn(test_file, special_tokens)
+    for word_byte_tuple, cnt in pre_tokens_cnt.items():
+        print(f"{word_byte_tuple}:{cnt}")
+
+    if os.path.exists(test_file):
+        os.remove(test_file)
+
+def _test_get_stats(init_fn):
+    pre_tokens_cnt = {(b'b', b'a', b'n', b'a', b'n', b'a'): 1}
+    pair_counts = init_fn(pre_tokens_cnt)
+    print(f"pairs:{pair_counts}")
+
+def _test_main_loop(init_fn):
+    test_file = "test_corpus.txt"
+    corpus_text =(
+        """abracadabra! abracadabra! [CLS] ☕ [CLS] ☕"""
+    )
+    with open(test_file, "w", encoding="utf-8") as f:
+        f.write(corpus_text)
+    print(f"preview of text: \n {corpus_text[:50]}")
+
+    special_tokens = ["[CLS]", "[SEP]"]
+    vocab, merge_rules = init_fn(
+        input_path = test_file,
+        vocab_size = 265,
+        special_tokens = special_tokens
+    )
+    print(f"output of vocab: \n {vocab}")
+    print(f"output of merge_rules: \n {merge_rules}")
+
+    if os.path.exists(test_file):
+        os.remove(test_file)
+
 # Initialize Vocabulary
 def init_vocab_v1_base(special_tokens: list[str]) -> tuple[dict[int: bytes], int]:
     """creat base ASCII Vocabulary and add special_tokens"""
@@ -22,16 +79,6 @@ def init_vocab_v1_base(special_tokens: list[str]) -> tuple[dict[int: bytes], int
             next_id += 1
 
     return vocab, next_id
-
-def _test_init_vocab(init_fn):
-    special_tokens = ["<|endoftext|>", "a"]
-    vocab, next_id = init_fn(special_tokens)
-    for id, token in vocab.items():
-        print(f"{id}:{repr(token)}", end="\t")
-        if (id + 1) % 5 == 0:
-            print()
-        if id == len(vocab):
-            print()
 
 # Pre Tokenization
 def pre_tokenization_v1_base(input_path: str | os.PathLike, special_tokens: list[str]) -> dict[tuple[bytes, ...], int]:
@@ -66,26 +113,6 @@ def pre_tokenization_v1_base(input_path: str | os.PathLike, special_tokens: list
             
     return pre_tokens_cnt
 
-def _test_pre_tokenization(init_fn):
-    test_file = "test-data.txt"
-    special_tokens = ["<|endoftext|>", ]
-    test_content = """
-    HI, this is the test example in BPE training code.<|endoftext|>
-    I just wanna testing my code weither success to work<|endoftext|>
-    Happy for 2026CS336.<|endoftext|>
-    written in 2026-2-4-12:21
-    """
-
-    with open(test_file, 'w', encoding='utf-8') as f:
-        f.write(test_content)
-
-    pre_tokens_cnt = init_fn(test_file, special_tokens)
-    for word_byte_tuple, cnt in pre_tokens_cnt.items():
-        print(f"{word_byte_tuple}:{cnt}")
-
-    if os.path.exists(test_file):
-        os.remove(test_file)
-
 # Get frequency of pairs
 def get_stats_v1_base(pre_tokens_cnt: dict[tuple[bytes, ...], int]) -> dict[tuple[bytes, bytes], int]:
     pair_counts = collections.defaultdict(int)
@@ -95,11 +122,6 @@ def get_stats_v1_base(pre_tokens_cnt: dict[tuple[bytes, ...], int]) -> dict[tupl
             pair = (token_bytes[i], token_bytes[i+1])
             pair_counts[pair] += cnt
     return pair_counts
-
-def _test_get_stats(init_fn):
-    pre_tokens_cnt = {(b'b', b'a', b'n', b'a', b'n', b'a'): 1}
-    pair_counts = init_fn(pre_tokens_cnt)
-    print(f"pairs:{pair_counts}")
 
 # Merge tokens
 def merge_tokens_v1_base(pre_tokens_cnt: dict[tuple[bytes, ...], int], pair: tuple[bytes, bytes], new_token: bytes) -> dict[tuple[bytes, ...], int]:
@@ -172,26 +194,6 @@ def run_train_bpe_v1(
 
     return vocab, merge_rules
 
-def _test_main_loop(init_fn):
-    test_file = "test_corpus.txt"
-    corpus_text =(
-        """abracadabra! abracadabra! [CLS] ☕ [CLS] ☕"""
-    )
-    with open(test_file, "w", encoding="utf-8") as f:
-        f.write(corpus_text)
-    print(f"preview of text: \n {corpus_text[:50]}")
-
-    special_tokens = ["[CLS]", "[SEP]"]
-    vocab, merge_rules = init_fn(
-        input_path = test_file,
-        vocab_size = 265,
-        special_tokens = special_tokens
-    )
-    print(f"output of vocab: \n {vocab}")
-    print(f"output of merge_rules: \n {merge_rules}")
-
-    if os.path.exists(test_file):
-        os.remove(test_file)
 
 
 class Tokenizer:
